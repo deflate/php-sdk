@@ -211,9 +211,6 @@ class Deflate
      */
     private function _request($action, $data = false)
     {
-        // Get cURL resource
-        $curl = curl_init();
-
         // Start building our body
         $body = array(
             'auth' => array(
@@ -227,6 +224,18 @@ class Deflate
             $body = array_merge($body, $data);
         }
 
-        return json_decode($resp);
+        $client = new Client([
+            'base_uri' => self::API_URL
+        ]);
+        $request = $client->request('POST', $action, [
+            'body' => json_encode($body)
+        ]);
+
+        // Ensure the response is a 200 status
+        if ($request->getStatusCode() == 200) {
+            return json_decode($request->getBody()->getContents());
+        }
+
+        return false;
     }
 }
