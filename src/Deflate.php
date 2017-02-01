@@ -3,6 +3,7 @@
 namespace Deflate;
 
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\ClientException;
 
 /**
  * Class Deflate
@@ -17,16 +18,25 @@ class Deflate
      * The URL for the API
      */
     const API_URL = 'https://api.deflate.io/v1/';
+
     /**
      * The current SDK version
      */
     const SDK_VERSION = '1.0.0';
+
+    /**
+     * Declare compression types
+     */
+    const LOSSY = 'lossy';
+    const LOSSLESS = 'lossless';
+
     /**
      * API Key
      *
      * @var string
      */
     private $apiKey;
+
     /**
      * API secret
      *
@@ -35,17 +45,39 @@ class Deflate
     private $apiSecret;
 
     /**
-     * Pass in the api credentials to create a connection with Deflate
+     * Default options for compression requests
      *
-     * @param $apiKey
-     * @param $apiSecret
+     * Possible options:
+     * - id
+     * - wait
+     * - callback
+     * - custom
+     *
+     * @var array
+     */
+    private $options = [];
+
+    /**
+     * Store the last error
+     *
+     * @var string|bool
+     */
+    private $lastError = false;
+
+    /**
+     * Deflate constructor.
+     *
+     * @param string $apiKey
+     * @param string $apiSecret
+     * @param array $options
      *
      * @throws \Exception
      */
-    public function __construct($apiKey, $apiSecret)
+    public function __construct($apiKey, $apiSecret, $options = [])
     {
         $this->apiKey = $apiKey;
         $this->apiSecret = $apiSecret;
+        $this->options = $options;
 
         // Check we can login with the details provided
         if (!$this->account()) {
@@ -60,7 +92,7 @@ class Deflate
      */
     public function account()
     {
-        if ($response = $this->_request('account')) {
+        if ($response = $this->request('account')) {
             if (isset($response->success) && $response->success == true) {
                 return $response->account;
             }
@@ -71,86 +103,59 @@ class Deflate
     /**
      * Compress an individual image
      *
-     * @param      $image
-     * @param      $type
-     * @param bool $id
-     * @param bool $wait
-     * @param bool $callback
-     * @param bool $custom
+     * @param string|array $image
+     * @param string $type
+     * @param array $options
      *
      * @return bool|mixed
      * @throws \Exception
      */
-    public function compress($image, $type, $id = false, $wait = true, $callback = false, $custom = false)
+    public function compress($image, $type, $options = [])
     {
         // Build our request
-        $request = array(
-            'image' => $image,
-            'type'  => $type,
-            'wait'  => $wait
-        );
-        // Include an ID with the request
-        if ($id !== false) {
-            $request['id'] = $id;
+        $request = [
+            'type'  => $type
+        ];
+
+        if (is_array($image)) {
+            $request['images'] = $image;
+        } else {
+            $request['image'] = $image;
         }
+
+        $request = $this->buildRequest($request, $options);
+
         // Verify that we have a callback
-        if ($wait === false && $callback === false) {
+        if (isset($options['wait']) && $options['wait'] === false &&
+            isset($options['callback']) && $options['callback'] === false
+        ) {
             throw new \Exception('A callback must be defined when you\'re not wanting to wait.');
         }
-        // Include the fallback in the request
-        if ($callback) {
-            $request['callback'] = $callback;
-        }
-        // Pass any custom data over
-        if ($custom) {
-            $request['custom'] = $custom;
-        }
-        if ($response = $this->_request('deflate', $request)) {
+
+        if ($response = $this->request('deflate', $request)) {
             if (isset($response->success) && $response->success == true) {
                 return $response;
             }
         }
+
         return false;
     }
+
     /**
-     * Attempt to compress multiple images
+     * Compress multiple images
      *
-     * @param            $images
-     * @param            $type
-     * @param bool|true  $wait
-     * @param bool|false $callback
-     * @param bool|false $custom
+     * @param array $images
+     * @param       $type
+     * @param array $options
      *
      * @return bool|mixed
      * @throws \Exception
      */
-    public function compressMultiple($images, $type, $wait = true, $callback = false, $custom = false)
+    public function compressMultiple(array $images, $type, $options = [])
     {
-        // Build our request
-        $request = array(
-            'images' => $images,
-            'type'   => $type,
-            'wait'   => $wait
-        );
-        // Verify that we have a callback
-        if ($wait === false && $callback === false) {
-            throw new \Exception('A callback must be defined when you\'re not wanting to wait.');
-        }
-        // Include the fallback in the request
-        if ($callback) {
-            $request['callback'] = $callback;
-        }
-        // Pass any custom data over
-        if ($custom) {
-            $request['custom'] = $custom;
-        }
-        if ($response = $this->_request('deflate', $request)) {
-            if (isset($response->success) && $response->success == true) {
-                return $response;
-            }
-        }
-        return false;
+        return $this->compress($images, $type, $options);
     }
+
     /**
      * Return the total limit of images that can be compressed at once
      *
@@ -158,13 +163,14 @@ class Deflate
      */
     public function limit()
     {
-        if ($response = $this->_request('limit')) {
+        if ($response = $this->request('limit')) {
             if (isset($response->limit) && $response->limit == true) {
                 return $response->limit;
             }
         }
         return false;
     }
+
     /**
      * Return the supported image formats
      *
@@ -174,7 +180,7 @@ class Deflate
      */
     public function supported($type = false)
     {
-        if ($response = $this->_request('supported')) {
+        if ($response = $this->request('supported')) {
             if (isset($response->success) && $response->success == true) {
                 switch ($type) {
                     case 'extensions':
@@ -191,6 +197,17 @@ class Deflate
         }
         return false;
     }
+
+    /**
+     * Return the last error the API encountered
+     *
+     * @return string
+     */
+    public function getLastError()
+    {
+        return $this->lastError;
+    }
+
     /**
      * Return the callback response as an array
      *
@@ -202,6 +219,25 @@ class Deflate
     }
 
     /**
+     * Build up the request from the supplied options
+     *
+     * @param array $request
+     * @param array $options
+     *
+     * @return array
+     */
+    private function buildRequest(array $request, array $options)
+    {
+        $allowedOptions = ['id', 'wait', 'callback', 'custom'];
+
+        // Merge the global options with the local options
+        $finalOptions = array_intersect_key(array_merge($this->options, $options), array_flip($allowedOptions));
+
+        // Merge the options into the final request
+        return array_merge($request, $finalOptions);
+    }
+
+    /**
      * Make a request to the API
      *
      * @param            $action
@@ -209,31 +245,39 @@ class Deflate
      *
      * @return mixed
      */
-    private function _request($action, $data = false)
+    private function request($action, $data = false)
     {
         // Start building our body
-        $body = array(
-            'auth' => array(
+        $body = [
+            'auth' => [
                 'api_key'    => $this->apiKey,
                 'api_secret' => $this->apiSecret
-            )
-        );
+            ]
+        ];
 
         // Merge in the data
         if ($data !== false && is_array($data)) {
             $body = array_merge($body, $data);
         }
 
+        // Start the client
         $client = new Client([
             'base_uri' => self::API_URL
         ]);
-        $request = $client->request('POST', $action, [
-            'body' => json_encode($body)
-        ]);
 
-        // Ensure the response is a 200 status
-        if ($request->getStatusCode() == 200) {
-            return json_decode($request->getBody()->getContents());
+        try {
+            $request = $client->request('POST', $action, [
+                'body' => json_encode($body)
+            ]);
+
+            // Ensure the response is a 200 status
+            if ($request->getStatusCode() == 200) {
+                return json_decode($request->getBody()->getContents());
+            }
+        } catch (ClientException $e) {
+            $this->lastError = json_decode($e->getResponse()->getBody()->getContents());
+        } catch (\Exception $e) {
+            $this->lastError = $e->getMessage();
         }
 
         return false;
