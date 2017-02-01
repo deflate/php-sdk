@@ -1,0 +1,21 @@
+{
+  "name": "deflate/php-sdk",
+  "description": "Official Deflate PHP SDK",
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Dave Macaulay",
+      "email": "dave@udder.io",
+      "url": "https://deflate.io"
+    }
+  ],
+  "require": {
+    "php": ">=5.5",
+    "guzzlehttp/guzzle": "^6.2"
+  },
+  "autoload": {
+    "psr-4": {
+      "Deflate\\": "src/"
+    }
+  },
+}
